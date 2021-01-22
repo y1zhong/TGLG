@@ -19,6 +19,10 @@
 #   save_mcmc: all the mcmc samples saved after burnin and thinning.
 #' @export
 #' @import glmnet
+#' @import mvnfast
+#' @import MCMCpack
+#' @import pROC
+#' @import truncnorm
 TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
                            nest=10000, nthin=10, a.alpha=0.01,b.alpha=0.01,
                            a.gamma=0.01,b.gamma=0.01,
