@@ -1,5 +1,6 @@
 # Generate TF graph
 #' @export
+#' @import igraph
 TF_graph = function(nTarget=10,nTF=3){
   np=(nTarget+1)*nTF
   adjmat=matrix(0,nrow=np,ncol=np)
