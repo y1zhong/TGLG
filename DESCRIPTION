@@ -1,0 +1,19 @@
+Package: TGLG
+Type: Package
+Title: Bayesian network marker selection based on the Thresholded Graph Laplacian Gaussian (TGLG) prior
+Version: 0.1.0
+Author: Qingpo Cai, Jian Kang and Tianwei Yu
+Maintainer: Yuan Zhong <ylzhong@umich.edu>
+Description: More about what it does (maybe more than one line)
+    Use four spaces when indenting paragraphs within the Description.
+License: What license is it under?
+Encoding: UTF-8
+LazyData: true
+Imports: 
+    igraph,
+    MCMCpack,
+    pROC,
+    glmnet,
+    truncnorm,
+    mvnfast
+RoxygenNote: 7.1.1
