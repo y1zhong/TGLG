@@ -17,7 +17,8 @@
 #' @return save_mcmc: all the mcmc samples saved after burnin and thinning.
 #' @export
 #'
-TGLG_binary = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,nest=10000,
+
+TGLG_binary_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,nest=10000,
                        nthin=10, a.alpha=0.01,b.alpha=0.01,a.gamma=0.01,b.gamma=0.01,
                        lambda.lower=0, lambda.upper=10, emu=-5, esd=3,prob_select=0.95){
   p = ncol(X) #number of features
@@ -80,7 +81,8 @@ TGLG_binary = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,nest
     curr.post=sum(y*curr.temp) - sum(log(1+exp(curr.temp))) - 0.5*curr.gamma%*%(eigmat%*%curr.gamma)/sigma.gamma
     currz = 1/(1+exp(-curr.temp))
     curr.diff = crossprod(X, y-currz)
-    new.gamma.mean = curr.gamma + tau.gamma/2*(curr.diff*gamma*curr.dgamma - crossprod(eigmat,curr.beta)/sigma.gamma)
+    #new.gamma.mean = curr.gamma + tau.gamma/2*(curr.diff*gamma*curr.dgamma - crossprod(eigmat,curr.beta)/sigma.gamma)
+    new.gamma.mean = curr.gamma + tau.gamma/2*(curr.diff*gamma*curr.dgamma - (eigmat%*%curr.beta)/sigma.gamma)
     new.gamma.mean =as.numeric(new.gamma.mean)
     new.gamma=new.gamma.mean + rnorm(p, mean=0, sd =sqrt(tau.gamma))
     new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
@@ -90,7 +92,8 @@ TGLG_binary = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,nest
     new.dgamma = dappro2(new.hgamma)*new.gamma
     newz = 1/(1+exp(-new.temp))
     new.diff = crossprod(X, y-newz)
-    curr.gamma.mean = new.gamma + tau.gamma/2*(new.diff*gamma*new.dgamma - crossprod(eigmat,new.beta)/sigma.gamma)
+    # curr.gamma.mean = new.gamma + tau.gamma/2*(new.diff*gamma*new.dgamma - crossprod(eigmat,new.beta)/sigma.gamma)
+    curr.gamma.mean = new.gamma + tau.gamma/2*(new.diff*gamma*new.dgamma - (eigmat%*%new.beta)/sigma.gamma)
     new.post=sum(y*new.temp) - sum(log(1+exp(new.temp))) - 0.5*new.gamma%*%(eigmat%*%new.gamma)/sigma.gamma
     u=runif(1)
     post.diff=new.post - 0.5*sum((curr.gamma-curr.gamma.mean)^2/tau.gamma)-curr.post +
