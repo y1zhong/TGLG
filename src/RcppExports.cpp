@@ -17,9 +17,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// solve_tri
+arma::vec solve_tri(arma::mat X, arma::vec mu);
+RcppExport SEXP _TGLG_solve_tri(SEXP XSEXP, SEXP muSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
+    Rcpp::traits::input_parameter< arma::vec >::type mu(muSEXP);
+    rcpp_result_gen = Rcpp::wrap(solve_tri(X, mu));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_TGLG_eigen_val", (DL_FUNC) &_TGLG_eigen_val, 1},
+    {"_TGLG_solve_tri", (DL_FUNC) &_TGLG_solve_tri, 2},
     {NULL, NULL, 0}
 };
 

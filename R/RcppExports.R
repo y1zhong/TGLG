@@ -5,3 +5,7 @@ eigen_val <- function(X) {
     .Call(`_TGLG_eigen_val`, X)
 }
 
+solve_tri <- function(X, mu) {
+    .Call(`_TGLG_solve_tri`, X, mu)
+}
+

@@ -23,6 +23,7 @@
 #' @import MCMCpack
 #' @import pROC
 #' @import truncnorm
+#' @import Matrix
 TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
                            nest=10000, nthin=10, a.alpha=0.01,b.alpha=0.01,
                            a.gamma=0.01,b.gamma=0.01,
@@ -37,7 +38,8 @@ TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqT
 
   }
   laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
-
+  #laplacian_sp <- Matrix(laplacian, sparse = TRUE)
+  
   tau.gamma=0.01/p
   tau.lambda=0.1
   tau.epsilon = 0.5
@@ -63,10 +65,13 @@ TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqT
   epsilon = emu
   #eigen.value = eigen(laplacian)$values
   eigen.value = eigen_val(laplacian)
+  #Ip <- .sparseDiagonal(nrow(laplacian))
+  
   Ip = diag(1,nrow(laplacian)) #identy matrix
-
   eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
-
+  
+  #eigmat = laplacian_sp+exp(epsilon)*Ip
+  
   #matrix to store values for all iterations
   Beta =matrix(0,nrow=nsim,ncol=p)
   Alpha =matrix(0,nrow=nsim,ncol=p)
@@ -132,7 +137,7 @@ TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqT
         pvar = diag(rep(1/sigma.alpha,length(actset)))
         premat = crossprod(XA)/sigmae + pvar
 
-        premat_chol <- chol(premat)
+        # premat_chol <- chol(premat)
         # mu <- crossprod(XA, y)/sigmae
         # b <- forwardsolve(t(premat_chol), mu)
         # Z <- rnorm(length(b), 0, 1)
@@ -267,21 +272,22 @@ TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqT
 
 
 
-TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
+TGLG_continuous_revised_sampling = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
                                    nest=10000, nthin=10, a.alpha=0.01,b.alpha=0.01,
                                    a.gamma=0.01,b.gamma=0.01,
                                    ae0=0.01,be0=0.01,lambda.lower=0,
                                    lambda.upper=10, emu=-5, esd=3,prob_select=0.95){
 
   p = ncol(X) #number of features
-
+  
   if(is.null(net)){
     adjmat = diag(p)
     net=graph.adjacency(adjmat,mode="undirected")
-
+    
   }
   laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
-
+  #laplacian_sp <- Matrix(laplacian, sparse = TRUE)
+  
   tau.gamma=0.01/p
   tau.lambda=0.1
   tau.epsilon = 0.5
@@ -305,11 +311,14 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
   sigma.alpha = 5
   sigma.gamma = b.gamma/a.gamma
   epsilon = emu
-  eigen.value = eigen(laplacian)$values
+  #eigen.value = eigen(laplacian)$values
+  eigen.value = eigen_val(laplacian)
   Ip = diag(1,nrow(laplacian)) #identy matrix
-
+  #Ip <- .sparseDiagonal(nrow(laplacian))
+  
   eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
-
+  #eigmat = laplacian_sp+exp(epsilon)*Ip
+  
   #matrix to store values for all iterations
   Beta =matrix(0,nrow=nsim,ncol=p)
   Alpha =matrix(0,nrow=nsim,ncol=p)
@@ -320,6 +329,7 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
   Epsilon = rep(0, nsim)
   likelihood = rep(0, nsim)
   Sigmae = rep(0, nsim)
+  #SimTime = rep(0, nsim)
   pb = txtProgressBar(style=3)
   for(sim in 1:nsim){
     #update gamma using MALA
@@ -329,8 +339,14 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
     yerr = y-X%*%curr.beta
     curr.diff=crossprod(X, yerr)
     curr.dgamma = dappro2(curr.hgamma)*curr.gamma
-    curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
-    new.gamma.mean =curr.gamma + tau.gamma/2*(curr.diff*gamma*curr.dgamma/sigmae - eigmat%*%curr.gamma/sigma.gamma)
+    
+    tau.gamma_half <- tau.gamma/2
+    sigmae_twice <- sigmae*2
+    
+    eigmat_curr.gamma <- eigmat%*%curr.gamma
+    #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
+    curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
+    new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
     new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
     new.gamma = as.numeric(new.gamma)
     new.hgamma = new.gamma^2-lambda^2
@@ -338,8 +354,10 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
     new.yerr = y-X%*%new.beta
     new.diff = crossprod(X, new.yerr)
     new.dgamma = dappro2(new.hgamma)*new.gamma
-    curr.gamma.mean = new.gamma + tau.gamma/2*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
-    new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
+    
+    #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
     curr.adiff = new.gamma- new.gamma.mean
     curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
     new.adiff=curr.gamma-curr.gamma.mean
@@ -353,30 +371,41 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
     Gamma[sim,]=gamma
     beta=alpha*as.numeric(abs(gamma)>lambda)
     #update alpha
-
+    
     actset=which(abs(gamma)>lambda)
     non.actset=setdiff(1:p,actset)
-
+    actset_len <- length(actset)
     if(length(non.actset)>0 ){
       alpha[non.actset]=rnorm(length(non.actset),mean=0,sd=sqrt(sigma.alpha))
     }
-
-    if(length(actset)>0){
-      if(length(actset) > 1) {
+    
+    if(actset_len>0){
+      if(actset_len > 1) {
         XA=X[,actset]
-        pvar = diag(rep(1/sigma.alpha,length(actset)))
-        premat = crossprod(XA)/sigmae + pvar
-
-
+        # pvar = diag(rep(1/sigma.alpha,length(actset)))
+        # premat = crossprod(XA)/sigmae + pvar
+        premat = crossprod(XA)/sigmae
+        diag(premat) <- diag(premat) + (1/sigma.alpha)
+        
         premat_chol <- chol(premat)
         mu <- crossprod(XA, y)/sigmae
-        b <- forwardsolve(t(premat_chol), mu)
-        Z <- rnorm(length(b), 0, 1)
+        #transpose in function
+        #b2 <- forwardsolve(premat_chol, mu, transpose = T)
+        b <- backsolve(premat_chol, mu, transpose=T)
+        Z <- rnorm(actset_len, 0, 1)
         alpha[actset] <- backsolve(premat_chol, Z+b)
-
+        
         # varx = chol2inv(chol(premat))
         # meanx = varx%*%crossprod(XA, y)/sigmae
         # alpha[actset] = rmvn(1,  mu=meanx, sigma = varx)
+        
+        #varx = chol2inv(chol(premat))
+        # mu <- crossprod(XA, y)/sigmae
+        # s <- solve(premat, mu)
+        # Z <- rnorm(length(mu), 0, 1)
+        # b <- backsolve(premat_chol, Z)
+        # alpha[actset] <- s + b
+        
         #gamma[actset] = rmvnorm(1, mean=meanx, sigma = varx)
       } else {
         XA = X[, actset]
@@ -385,30 +414,35 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
         alpha[actset] = rnorm(1, mean = meanx, sd = sqrt(varx))
       }
     }
+    
     Alpha[sim, ] = alpha
     #update sigma.gamma
     a.gamma.posterior=a.gamma+0.5*p
-    b.gamma.posterior=b.gamma+0.5*crossprod(gamma,crossprod(eigmat,gamma))
+    b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
     sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
     Sigma.gamma[sim] = sigma.gamma
-
+    
     beta=alpha*as.numeric(abs(gamma)>lambda)
     a.alpha.posterior = a.alpha + 0.5*p
     b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
     sigma.alpha = rinvgamma(1, a.alpha.posterior, a.alpha.posterior)
     Sigma.alpha[sim] = sigma.alpha
-
+    
     ae=ae0+nrow(X)/2
-    be=be0+0.5*crossprod(y-X%*%beta)
+    be=be0+0.5*sum((y-X%*%beta)^2)
     sigmae=rinvgamma(1,ae,be)
     Sigmae[sim] =sigmae
-
+    
     #update epsilon
     epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
     sgamma = sum(gamma^2)
-    elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma*0.5/sigma.gamma - epsilon - 0.5*(epsilon-emu)^2/esd^2
+    
+    sgamma_cal <- sgamma*0.5/sigma.gamma
+    esd_square <- esd^2
+    
+    elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma_cal - epsilon - 0.5*(epsilon-emu)^2/esd_square
     eigmat.new = laplacian + exp(epsilon.new)*Ip
-    elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma*0.5/sigma.gamma-epsilon.new- 0.5*(epsilon.new-emu)^2/esd^2
+    elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma_cal-epsilon.new- 0.5*(epsilon.new-emu)^2/esd_square
     eu = runif(1)
     ediff = elike.new - elike.curr
     if(ediff>=log(eu)) {
@@ -417,12 +451,13 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
       accept.epsilon = accept.epsilon+1
     }
     Epsilon[sim] = epsilon
-
+    
     #update lambda
     lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
-    curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
+    #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
+    curr.lpost=-sum((y-X%*%beta)^2)/sigmae*0.5
     new.beta=alpha*as.numeric(abs(gamma)>lambda.new)
-    new.lpost=-crossprod(y-X%*%new.beta)/sigmae*0.5
+    new.lpost=-sum((y-X%*%new.beta)^2)/sigmae*0.5
     dnew = log(dtruncnorm(lambda.new,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda)))
     dold = log(dtruncnorm(lambda,a=lambda.lower,b=lambda.upper,mean=lambda.new,sd=sqrt(tau.lambda)))
     lu=runif(1)
@@ -434,10 +469,10 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
     }
     Lambda[sim]=lambda
     Beta[sim,]=beta
-
-    likelihood[sim] = -crossprod(y-X%*%beta)/sigmae*0.5
-
-
+    
+    likelihood[sim] = -sum((y-X%*%beta)^2)/sigmae*0.5
+    
+    
     if(sim<=ntune&sim%%freqTune==0){
       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
       tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
@@ -445,12 +480,12 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
       accept.gamma=0
       accept.epsilon=0
       accept.lambda =0
-
+      
     }
-
+    #SimTime[sim] <- time[3]
     setTxtProgressBar(pb,sim/nsim)
   }
-
+  
   close(pb)
   #use last nest iterations to do the estimation and thin by nthin
   numrow = nest/nthin
@@ -462,9 +497,9 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
   }
   #selection probability for each predictor
   gammaSelProb=apply(fgamma,2,mean)
-
+  
   hbeta=Beta[((nsim-nest+1):nsim)%%nthin==1,]
-
+  
   gammaSelId=as.numeric(gammaSelProb>prob_select)
   beta.est=rep(0,p)
   beta.select=which(gammaSelId==1)
@@ -472,7 +507,7 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
     colid =beta.select[j]
     beta.est[colid]=mean(hbeta[fgamma[,colid]==1, colid])
   }
-
+  
   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
   iter = seq((nsim-nest+1),nsim,by=nthin)
   save_mcmc = cbind(iter,Beta[iter,],Alpha[iter,],Gamma[iter,],
@@ -483,6 +518,6 @@ TGLG_continuous_revised2 = function(X, y, net=NULL,nsim=30000, ntune=10000, freq
                           paste("alpha",1:p,sep=""),
                           paste("gamma",1:p,sep=""),
                           "lambda","sigma_gamma","sigma_alpha","epsilon","sigmae","loglik")
-
+  
   return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
 }

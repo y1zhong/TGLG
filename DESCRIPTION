@@ -8,6 +8,6 @@ Maintainer: Who to complain to <yourfault@somewhere.net>
 Description: More about what it does (maybe more than one line)
 License: What license is it under?
 Depends: igraph
-Imports: Rcpp (>= 1.0.6), igraph, MCMCpack, pROC, glmnet, truncnorm, mvnfast
+Imports: Rcpp (>= 1.0.6), igraph, MCMCpack, pROC, glmnet, truncnorm, mvnfast, Matrix
 LinkingTo: Rcpp, RcppArmadillo
 RoxygenNote: 7.1.1
