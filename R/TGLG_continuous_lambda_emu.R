@@ -24,13 +24,13 @@
 #' @import pROC
 #' @import truncnorm
 #' @import Matrix
-TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
-                           nest=10000, nthin=10,  a.alpha=0.01,b.alpha=0.01,
-                           a.gamma=0.01,b.gamma=0.01,
-                           ae0=0.01,be0=0.01,lambda.lower=0,
-                           lambda.upper=10, emu=-5, esd=3,prob_select=0.95,
-                           seed=123, confound=NULL, beta.ini.meth='LASSO',
-                           lambda.ini='median', noise=FALSE, select.prop=0.9){
+TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
+                                  nest=10000, nthin=10,  a.alpha=0.01,b.alpha=0.01,
+                                  a.gamma=0.01,b.gamma=0.01, lambda=5,
+                                  ae0=0.01,be0=0.01,lambda.lower=0,
+                                  lambda.upper=10, emu=-5, esd=3,prob_select=0.95,
+                                  seed=123, confound=NULL, beta.ini.meth='LASSO',
+                                  noise=FALSE){
   #if(X.scale == T) X <- scale(X)
   if(!is.null(confound)){
     if (sum(apply(confound, 2, class) != "numeric") != 0) {
@@ -59,7 +59,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   #count number of acceptance during MCMC updates
   accept.gamma=0
   accept.epsilon=0
-  accept.lambda =0
+  #accept.lambda =0
   #get initial value using lasso
   #alpha = 0.5
   if(beta.ini.meth == 'LASSO'){
@@ -95,22 +95,22 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   
   
   #initial value
-  sigmae=sd(y)#rinvgamma(1,ae0,be0)
+  sigmae=var(y)#rinvgamma(1,ae0,be0)
   betaini2 = beta.ini[which(beta.ini!=0)]
   if(length(betaini2)==0){
     betaini2=0.001
   }
   #change lambda inital
-  if(lambda.ini == 'median'){
-    lambda =  median(abs(betaini2))/2
-  } else if (lambda.ini == 'zero') {
-    lambda = 0
-  } else if (lambda.ini == 'prop') {
-    beta.abs <- abs(beta.ini.feat)
-    lambda = quantile(beta.abs, select.prop)
-  } else {
-    stop('lambda initial incorrect')
-  }
+  # if(lambda.ini == 'median'){
+  #   lambda =  median(abs(betaini2))/2
+  # } else if (lambda.ini == 'zero') {
+  #   lambda = 0
+  # } else if (lambda.ini == 'prop') {
+  #   beta.abs <- abs(beta.ini.feat)
+  #   lambda = quantile(beta.abs, select.prop)
+  # } else {
+  #   stop('lambda initial incorrect')
+  # }
   
   burnin <- nsim-nest
   gamma =beta.ini
@@ -135,7 +135,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   Beta =matrix(0,nrow=numrow,ncol=p)
   Alpha =matrix(0,nrow=numrow,ncol=p)
   Gamma = matrix(0,nrow=numrow,ncol=p)
-  Lambda=rep(0,numrow)
+  #Lambda=rep(0,numrow)
   Sigma.gamma=rep(0,numrow)
   Sigma.alpha = rep(0, numrow)
   Epsilon = rep(0, numrow)
@@ -218,7 +218,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     a.gamma.posterior=a.gamma+0.5*p
     b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
     sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
-  
+    
     beta=alpha*as.numeric(abs(gamma)>lambda)
     a.alpha.posterior = a.alpha + 0.5*p
     b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
@@ -227,48 +227,48 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     ae=ae0+nrow(X)/2
     be=be0+0.5*sum((y-X%*%beta)^2)
     sigmae=rinvgamma(1,ae,be)
- 
+    
     #update epsilon
-    epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
-    sgamma = sum(gamma^2)
+    # epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
+    # sgamma = sum(gamma^2)
+    # 
+    # sgamma_cal <- sgamma*0.5/sigma.gamma
+    # esd_square <- esd^2
+    # 
+    # elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma_cal - epsilon - 0.5*(epsilon-emu)^2/esd_square
+    # eigmat.new = laplacian + exp(epsilon.new)*Ip
+    # elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma_cal-epsilon.new- 0.5*(epsilon.new-emu)^2/esd_square
+    # eu = runif(1)
+    # ediff = elike.new - elike.curr
+    # if(ediff>=log(eu)) {
+    #   epsilon = epsilon.new
+    #   eigmat = eigmat.new
+    #   accept.epsilon = accept.epsilon+1
+    # }
     
-    sgamma_cal <- sgamma*0.5/sigma.gamma
-    esd_square <- esd^2
-    
-    elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma_cal - epsilon - 0.5*(epsilon-emu)^2/esd_square
-    eigmat.new = laplacian + exp(epsilon.new)*Ip
-    elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma_cal-epsilon.new- 0.5*(epsilon.new-emu)^2/esd_square
-    eu = runif(1)
-    ediff = elike.new - elike.curr
-    if(ediff>=log(eu)) {
-      epsilon = epsilon.new
-      eigmat = eigmat.new
-      accept.epsilon = accept.epsilon+1
-    }
-
     #update lambda
-    lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
-    #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
-    curr.lpost=-sum((y-X%*%beta)^2)/sigmae*0.5
-    new.beta=alpha*as.numeric(abs(gamma)>lambda.new)
-    new.lpost=-sum((y-X%*%new.beta)^2)/sigmae*0.5
-    dnew = log(dtruncnorm(lambda.new,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda)))
-    dold = log(dtruncnorm(lambda,a=lambda.lower,b=lambda.upper,mean=lambda.new,sd=sqrt(tau.lambda)))
-    llu=runif(1)
-    ldiff=new.lpost + dold-curr.lpost-dnew
-    if(ldiff>log(llu)){
-      lambda=lambda.new
-      beta=new.beta
-      accept.lambda = accept.lambda+1
-    }
-
+    # lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
+    # #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
+    # curr.lpost=-sum((y-X%*%beta)^2)/sigmae*0.5
+    # new.beta=alpha*as.numeric(abs(gamma)>lambda.new)
+    # new.lpost=-sum((y-X%*%new.beta)^2)/sigmae*0.5
+    # dnew = log(dtruncnorm(lambda.new,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda)))
+    # dold = log(dtruncnorm(lambda,a=lambda.lower,b=lambda.upper,mean=lambda.new,sd=sqrt(tau.lambda)))
+    # llu=runif(1)
+    # ldiff=new.lpost + dold-curr.lpost-dnew
+    # if(ldiff>log(llu)){
+    #   lambda=lambda.new
+    #   beta=new.beta
+    #   accept.lambda = accept.lambda+1
+    # }
+    
     if(sim<=ntune&sim%%freqTune==0){
       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
-      tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
-      tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
+      #tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
+      #tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
       accept.gamma=0
       accept.epsilon=0
-      accept.lambda =0
+      #accept.lambda =0
       
     }
     if(sim %in% iter){
@@ -278,10 +278,10 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
       Sigma.gamma[idx] = sigma.gamma
       Sigma.alpha[idx] = sigma.alpha
       Sigmae[idx] =sigmae
-      Epsilon[idx] = epsilon
-      Lambda[idx]=lambda
+      #Epsilon[idx] = epsilon
+      #Lambda[idx]=lambda
       Beta[idx,]=beta
-      likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5-log(sigmae)/2
+      likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5
     }
     
     if(sim>burnin & ((sim-burnin) %% nthin == 0)){
@@ -310,13 +310,13 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
   #iter = seq((nsim-nest+1),nsim,by=nthin)
   save_mcmc = cbind(iter,Beta,Alpha,Gamma,
-                    Lambda,Sigma.gamma,Sigma.alpha,Epsilon,Sigmae,
+                    Sigma.gamma,Sigma.alpha,Sigmae,
                     likelihood)
   colnames(save_mcmc) = c("iter",
                           paste("beta",1:p,sep=""),
                           paste("alpha",1:p,sep=""),
                           paste("gamma",1:p,sep=""),
-                          "lambda","sigma_gamma","sigma_alpha","epsilon","sigmae","loglik")
+                          "sigma_gamma","sigma_alpha","sigmae","loglik")
   
   return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
 }

@@ -24,25 +24,25 @@
 #' @import pROC
 #' @import truncnorm
 #' @import Matrix
-TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
+TGLG_continuous_conf = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
                            nest=10000, nthin=10,  a.alpha=0.01,b.alpha=0.01,
                            a.gamma=0.01,b.gamma=0.01,
                            ae0=0.01,be0=0.01,lambda.lower=0,
                            lambda.upper=10, emu=-5, esd=3,prob_select=0.95,
-                           seed=123, confound=NULL, beta.ini.meth='LASSO',
+                           seed=123, confound, beta.ini.meth='LASSO',
                            lambda.ini='median', noise=FALSE, select.prop=0.9){
-  #if(X.scale == T) X <- scale(X)
-  if(!is.null(confound)){
-    if (sum(apply(confound, 2, class) != "numeric") != 0) {
-      stop('confounder class type not numeric')
-    }
-    if(nrow(X) != nrow(confound)) stop('rownames of X and cf do not match')
-    X_feat <- X
-    #confound_scale <- scale(confound)
-    p_feat <- ncol(X_feat)
-    X <- as.matrix(cbind(X,confound))
-    net <- net + vertices(colnames(confound))
-  }
+  # if(X.scale == T) X <- scale(X)
+  # if(!is.null(confound)){
+  #   if (sum(apply(confound, 2, class) != "numeric") != 0) {
+  #     stop('confounder class type not numeric')
+  #   }
+  #   if(nrow(X) != nrow(confound)) stop('rownames of X and cf do not match')
+  #   X_feat <- X
+  #   #confound_scale <- scale(confound)
+  #   p_feat <- ncol(X_feat)
+  #   X <- as.matrix(cbind(X,confound))
+  #   net <- net + vertices(colnames(confound))
+  # }
   set.seed(seed)
   p = ncol(X) #number of features
   if(is.null(net)){
@@ -56,10 +56,12 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   tau.gamma=0.01/p
   tau.lambda=0.1
   tau.epsilon = 0.5
+  tau.omega = 20
   #count number of acceptance during MCMC updates
   accept.gamma=0
   accept.epsilon=0
   accept.lambda =0
+  accept.omega =0
   #get initial value using lasso
   #alpha = 0.5
   if(beta.ini.meth == 'LASSO'){
@@ -67,22 +69,24 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     beta.ini=as.numeric(coef(beta.elas,beta.elas$lambda.min))[-1]
   } else if(beta.ini.meth  == 'Univariate') {
     #inital beta values for features
+    beta.ini.feat <- sapply(1:p, function(k){
+      beta_var <- cbind(X[, k], confound)
+      fit_temp <- glm(y~., data=data.frame(beta_var))
+      unname(fit_temp$coefficients[2])
+    })
+
+    #fit_temp <- glm(y~., data=data.frame(confound))
+    #beta.ini.conf <-  unname(fit_temp$coefficients[-1])
+    # beta.ini <- c(beta.ini.feat, beta.ini.conf)
+    beta.ini <- beta.ini.feat
+  } else if(beta.ini.meth  == 'Mixed') {
+    #inital beta values for features
     beta.ini.feat <- sapply(1:p_feat, function(k){
       beta_var <- cbind(X_feat[, k], confound)
       fit_temp <- glm(y~., data=data.frame(beta_var))
       unname(fit_temp$coefficients[2])
     })
-    #inital beta values for confounders
-    # beta.ini.conf <- sapply(1:(p-p_feat), function(k){
-    #   beta_var <- confound[, c(colnames(confound)[k], colnames(confound)[-k])]
-    #   fit_temp <- glm(y~., data=data.frame(beta_var))
-    #   summary(fit_temp)
-    #   unname(fit_temp$coefficients[2])
-    # })
-    fit_temp <- glm(y~., data=data.frame(confound))
-    #fit_temp_scale <- glm(y~., data=data.frame(confound_scale))
-    beta.ini.conf <-  unname(fit_temp$coefficients[-1])
-    beta.ini <- c(beta.ini.feat, beta.ini.conf)
+    
   } else {
     stop('beta ini method input incorrect')
   }
@@ -106,7 +110,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   } else if (lambda.ini == 'zero') {
     lambda = 0
   } else if (lambda.ini == 'prop') {
-    beta.abs <- abs(beta.ini.feat)
+    beta.abs <- abs(beta.ini)
     lambda = quantile(beta.abs, select.prop)
   } else {
     stop('lambda initial incorrect')
@@ -119,13 +123,20 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   sigma.alpha = 5
   sigma.gamma = b.gamma/a.gamma
   epsilon = emu
-  #eigen.value = eigen(laplacian)$values
   eigen.value = eigen_val(laplacian)
   Ip = diag(1,nrow(laplacian)) #identy matrix
-  #Ip <- .sparseDiagonal(nrow(laplacian))
-  
+
   eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
-  #eigmat = laplacian_sp+exp(epsilon)*Ip
+
+  #confounders
+  sigma.omega <- 50
+  Z <- as.matrix(confound)
+  p.conf <- ncol(Z)
+  prematZ = crossprod(Z)/sigmae
+  cholZ <- chol(prematZ)
+  diag(prematZ) <- diag(prematZ) + (1/sigma.omega)
+  diag.prematZ <-diag(prematZ)
+  omega <- rnorm(p.conf, 0, sd=sqrt(sigma.omega))
   
   #matrix to store values for all iterations
   #nmcmc <- nest/nthin
@@ -141,15 +152,55 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   Epsilon = rep(0, numrow)
   likelihood = rep(0, numrow)
   Sigmae = rep(0, numrow)
+  #for confounders
+  Omega = matrix(0,nrow=numrow,ncol=p.conf)
+  
   iter = seq((nsim-nest+1),nsim,by=nthin)
   #SimTime = rep(0, nsim)
   #sim=1
   pb = txtProgressBar(style=3)
   for(sim in 1:nsim){
+    y_temp <- y
+    
     #update gamma using MALA
     curr.gamma=gamma
     curr.hgamma= curr.gamma^2-lambda^2
     curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
+    
+    
+    #update omega
+    b <- backsolve(premat_chol, mu, transpose=T)
+    r <- rnorm(actset_len, 0, 1)
+    alpha[actset] <- backsolve(premat_chol, r+b)
+   # for(i in 1:p.conf){
+   #    z <- rnorm(1, 0, 1)
+   #    aii <- diag.prematZ[i]
+   #    if(i == 1) omega[i] <- z/sqrt(aii) -sum((prematZ[i, (i+1):p.conf]*omega[(i+1):p.conf]))/aii; next
+   #    if(i == p.conf) omega[i] <- z/sqrt(aii) -sum((-prematZ[i, 1:(i-1)]*omega[1:(i-1)]))/aii; next
+   #    omega[i] <- z/sqrt(aii) -(sum((prematZ[i, (i+1):p.conf]*omega[(i+1):p.conf])) - 
+   #      sum(prematZ[i, 1:(i-1)]*omega[1:(i-1)]))/aii
+   #  }
+    
+    # y <- y - X%*%curr.beta
+    # yerr.omega <- y - Z %*% omega
+    # new.omega <- curr.omega+rnorm(length(omega),0, sd=sqrt(tau.omega))
+    # #curr.adiff.omega = new.omega - curr.omega
+    # curr.den.omega = 0.5*sum(curr.omega^2)/sigma.omega
+    # curr.post.omega=0.5*sum(yerr.omega^2)/sigmae
+    # 
+    # new.yerr.omega <- y - Z %*% new.omega
+    # new.den.omega = 0.5*sum(new.omega^2)/sigma.omega
+    # new.post.omega=0.5*sum(new.yerr.omega^2)/sigmae
+    # u=runif(1)
+    # post.diff.omega=new.post.omega+new.den.omega-curr.post.omega-curr.den.omega
+    # #cat(paste('omega',post.diff.omega),'\n')
+    # if(post.diff.omega>=log(u)){
+    #   accept.omega=accept.omega+1
+    #   omega=new.omega
+    # }
+    
+    y <- y_temp
+    y <- y-Z%*%omega
     yerr = y-X%*%curr.beta
     curr.diff=crossprod(X, yerr)
     curr.dgamma = dappro2(curr.hgamma)*curr.gamma
@@ -178,6 +229,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     new.den =0.5* sum(new.adiff^2)/tau.gamma
     u=runif(1)
     post.diff=curr.post+curr.den-new.post-new.den
+    #cat(paste('gamma',post.diff[1,1]),'\n')
     if(post.diff>=log(u)){
       accept.gamma=accept.gamma+1
       gamma=new.gamma
@@ -203,8 +255,8 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
         #transpose in function
         #b2 <- forwardsolve(premat_chol, mu, transpose = T)
         b <- backsolve(premat_chol, mu, transpose=T)
-        Z <- rnorm(actset_len, 0, 1)
-        alpha[actset] <- backsolve(premat_chol, Z+b)
+        r <- rnorm(actset_len, 0, 1)
+        alpha[actset] <- backsolve(premat_chol, r+b)
         
       } else {
         XA = X[, actset]
@@ -218,7 +270,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     a.gamma.posterior=a.gamma+0.5*p
     b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
     sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
-  
+    
     beta=alpha*as.numeric(abs(gamma)>lambda)
     a.alpha.posterior = a.alpha + 0.5*p
     b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
@@ -227,7 +279,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     ae=ae0+nrow(X)/2
     be=be0+0.5*sum((y-X%*%beta)^2)
     sigmae=rinvgamma(1,ae,be)
- 
+    
     #update epsilon
     epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
     sgamma = sum(gamma^2)
@@ -245,7 +297,7 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
       eigmat = eigmat.new
       accept.epsilon = accept.epsilon+1
     }
-
+    
     #update lambda
     lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
     #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
@@ -261,11 +313,12 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
       beta=new.beta
       accept.lambda = accept.lambda+1
     }
-
+    
     if(sim<=ntune&sim%%freqTune==0){
       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
       tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
       tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
+      tau.omega=adjust_acceptance(accept.omega/100,tau.omega,0.5)
       accept.gamma=0
       accept.epsilon=0
       accept.lambda =0
@@ -281,13 +334,16 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
       Epsilon[idx] = epsilon
       Lambda[idx]=lambda
       Beta[idx,]=beta
-      likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5-log(sigmae)/2
+      Omega[idx,]=omega
+      likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5
     }
-    
-    if(sim>burnin & ((sim-burnin) %% nthin == 0)){
+    #change from 0 to 1 to match iter index
+    if(sim>burnin & ((sim-burnin) %% nthin == 1)){
       j=sim-burnin
       fgamma[j/nthin,]=as.numeric(abs(gamma)>lambda)
     }
+    y <- y_temp
+   # print(y[1])
     setTxtProgressBar(pb,sim/nsim)
   }
   
@@ -309,13 +365,14 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   
   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
   #iter = seq((nsim-nest+1),nsim,by=nthin)
-  save_mcmc = cbind(iter,Beta,Alpha,Gamma,
+  save_mcmc = cbind(iter,Beta,Alpha,Gamma,Omega,
                     Lambda,Sigma.gamma,Sigma.alpha,Epsilon,Sigmae,
                     likelihood)
   colnames(save_mcmc) = c("iter",
                           paste("beta",1:p,sep=""),
                           paste("alpha",1:p,sep=""),
                           paste("gamma",1:p,sep=""),
+                          paste("omega",1:p.conf,sep=""),
                           "lambda","sigma_gamma","sigma_alpha","epsilon","sigmae","loglik")
   
   return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
