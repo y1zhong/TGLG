@@ -142,6 +142,8 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   likelihood = rep(0, numrow)
   Sigmae = rep(0, numrow)
   iter = seq((nsim-nest+1),nsim,by=nthin)
+  AcceptGammaTune = c()
+  AcceptGamma = rep(0, numrow)
   #SimTime = rep(0, nsim)
   #sim=1
   pb = txtProgressBar(style=3)
@@ -264,10 +266,11 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     
     if(sim<=ntune&sim%%freqTune==0){
       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
+      AcceptGammaTune=c(AcceptGammaTune, accept.gamma)
       #tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
       #tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
       accept.gamma=0
-      accept.epsilon=0
+      #accept.epsilon=0
       #accept.lambda =0
       
     }
@@ -282,6 +285,7 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
       #Lambda[idx]=lambda
       Beta[idx,]=beta
       likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5
+      AcceptGamma[idx]=accept.gamma
     }
     
     if(sim>burnin & ((sim-burnin) %% nthin == 0)){
@@ -309,14 +313,20 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   
   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
   #iter = seq((nsim-nest+1),nsim,by=nthin)
-  save_mcmc = cbind(iter,Beta,Alpha,Gamma,
-                    Sigma.gamma,Sigma.alpha,Sigmae,
-                    likelihood)
-  colnames(save_mcmc) = c("iter",
-                          paste("beta",1:p,sep=""),
-                          paste("alpha",1:p,sep=""),
-                          paste("gamma",1:p,sep=""),
-                          "sigma_gamma","sigma_alpha","sigmae","loglik")
+  # save_mcmc = cbind(iter,Beta,Alpha,Gamma,
+  #                   Sigma.gamma,Sigma.alpha,Sigmae,
+  #                   likelihood)
+  save_mcmc = list(Beta=cbind(iter,Beta),
+                   Alpha=cbind(iter,Alpha),
+                   Gamma=cbind(iter,Gamma),
+                   oth=cbind(iter,Sigma.gamma,Sigma.alpha,
+                             Sigmae,likelihood,AcceptGamma)
+  # colnames(save_mcmc) = c("iter",
+  #                         paste("beta",1:p,sep=""),
+  #                         paste("alpha",1:p,sep=""),
+  #                         paste("gamma",1:p,sep=""),
+  #                         "sigma_gamma","sigma_alpha","sigmae","loglik")
   
-  return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
+  return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net),
+              save_mcmc = save_mcmc,AcceptGammaTune=AcceptGammaTune))
 }

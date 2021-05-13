@@ -184,7 +184,6 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
     }
     beta=alpha*as.numeric(abs(gamma)>lambda)
     #update alpha
-    
     actset=which(abs(gamma)>lambda)
     non.actset=setdiff(1:p,actset)
     actset_len <- length(actset)

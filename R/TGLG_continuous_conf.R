@@ -160,7 +160,7 @@ TGLG_continuous_conf = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune
   #sim=1
   pb = txtProgressBar(style=3)
   for(sim in 1:nsim){
-    y_temp <- y
+    #y_temp <- y
     
     #update gamma using MALA
     curr.gamma=gamma
@@ -169,6 +169,7 @@ TGLG_continuous_conf = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune
     
     
     #update omega
+    yz <- y - X%*%curr.beta
     b <- backsolve(premat_chol, mu, transpose=T)
     r <- rnorm(actset_len, 0, 1)
     alpha[actset] <- backsolve(premat_chol, r+b)
