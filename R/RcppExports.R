@@ -5,7 +5,11 @@ eigen_val <- function(X) {
     .Call(`_TGLG_eigen_val`, X)
 }
 
-solve_tri <- function(X, mu) {
-    .Call(`_TGLG_solve_tri`, X, mu)
+update_test <- function(a) {
+    .Call(`_TGLG_update_test`, a)
+}
+
+update_gamma <- function(gamma, alpha, y, X, eigmat, lambda, sigmae, sigmagamma, taugamma) {
+    .Call(`_TGLG_update_gamma`, gamma, alpha, y, X, eigmat, lambda, sigmae, sigmagamma, taugamma)
 }
 

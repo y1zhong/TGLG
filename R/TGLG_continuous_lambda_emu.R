@@ -116,7 +116,8 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   gamma =beta.ini
   alpha =beta.ini
   beta = alpha*as.numeric(abs(gamma)>lambda)
-  sigma.alpha = 5
+  #sigma.alpha = 5
+  sigma.alpha=0.1
   sigma.gamma = b.gamma/a.gamma
   epsilon = emu
   #eigen.value = eigen(laplacian)$values
@@ -266,7 +267,8 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     
     if(sim<=ntune&sim%%freqTune==0){
       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
-      AcceptGammaTune=c(AcceptGammaTune, accept.gamma)
+      #tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.3)
+      AcceptGammaTune=c(AcceptGammaTune, accept.gamma/100)
       #tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
       #tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
       accept.gamma=0
@@ -320,7 +322,7 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
                    Alpha=cbind(iter,Alpha),
                    Gamma=cbind(iter,Gamma),
                    oth=cbind(iter,Sigma.gamma,Sigma.alpha,
-                             Sigmae,likelihood,AcceptGamma)
+                             Sigmae,likelihood,AcceptGamma))
   # colnames(save_mcmc) = c("iter",
   #                         paste("beta",1:p,sep=""),
   #                         paste("alpha",1:p,sep=""),

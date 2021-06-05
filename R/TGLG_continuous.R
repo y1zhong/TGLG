@@ -147,42 +147,46 @@ TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
   pb = txtProgressBar(style=3)
   for(sim in 1:nsim){
     #update gamma using MALA
-    curr.gamma=gamma
-    curr.hgamma= curr.gamma^2-lambda^2
-    curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
-    yerr = y-X%*%curr.beta
-    curr.diff=crossprod(X, yerr)
-    curr.dgamma = dappro2(curr.hgamma)*curr.gamma
-    
-    tau.gamma_half <- tau.gamma/2
-    sigmae_twice <- sigmae*2
-    
-    eigmat_curr.gamma <- eigmat%*%curr.gamma
-    #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
-    curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
-    new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
-    new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
-    new.gamma = as.numeric(new.gamma)
-    new.hgamma = new.gamma^2-lambda^2
-    new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
-    new.yerr = y-X%*%new.beta
-    new.diff = crossprod(X, new.yerr)
-    new.dgamma = dappro2(new.hgamma)*new.gamma
-    curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
-    
-    #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
-    new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
-    curr.adiff = new.gamma- new.gamma.mean
-    curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
-    new.adiff=curr.gamma-curr.gamma.mean
-    new.den =0.5* sum(new.adiff^2)/tau.gamma
+    # curr.gamma=gamma
+    # curr.hgamma= curr.gamma^2-lambda^2
+    # curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
+    # yerr = y-X%*%curr.beta
+    # curr.diff=crossprod(X, yerr)
+    # curr.dgamma = dappro2(curr.hgamma)*curr.gamma
+    # 
+    # tau.gamma_half <- tau.gamma/2
+    # sigmae_twice <- sigmae*2
+    # 
+    # eigmat_curr.gamma <- eigmat%*%curr.gamma
+    # #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
+    # curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
+    # new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
+    # new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
+    # new.gamma = as.numeric(new.gamma)
+    # new.hgamma = new.gamma^2-lambda^2
+    # new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
+    # new.yerr = y-X%*%new.beta
+    # new.diff = crossprod(X, new.yerr)
+    # new.dgamma = dappro2(new.hgamma)*new.gamma
+    # curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
+    # 
+    # #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    # new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    # curr.adiff = new.gamma- new.gamma.mean
+    # curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
+    # new.adiff=curr.gamma-curr.gamma.mean
+    # new.den =0.5* sum(new.adiff^2)/tau.gamma
+    gamma_results = update_gamma(gamma, alpha, y, X, eigmat,
+                 lambda, sigmae, sigma.gamma, tau.gamma)
     u=runif(1)
-    post.diff=curr.post+curr.den-new.post-new.den
-    if(post.diff>=log(u)){
+    # post.diff=curr.post+curr.den-new.post-new.den
+    if(gamma_results$post.diff>=log(u)){
       accept.gamma=accept.gamma+1
-      gamma=new.gamma
+      gamma=gamma_results$new.gamma
     }
+   
     beta=alpha*as.numeric(abs(gamma)>lambda)
+    
     #update alpha
     actset=which(abs(gamma)>lambda)
     non.actset=setdiff(1:p,actset)
