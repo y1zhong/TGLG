@@ -17,41 +17,9 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
-// update_test
-arma::mat update_test(arma::vec a);
-RcppExport SEXP _TGLG_update_test(SEXP aSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< arma::vec >::type a(aSEXP);
-    rcpp_result_gen = Rcpp::wrap(update_test(a));
-    return rcpp_result_gen;
-END_RCPP
-}
-// update_gamma
-List update_gamma(arma::vec gamma, arma::uvec alpha, arma::vec y, arma::mat X, arma::mat eigmat, double lambda, double sigmae, double sigmagamma, double taugamma);
-RcppExport SEXP _TGLG_update_gamma(SEXP gammaSEXP, SEXP alphaSEXP, SEXP ySEXP, SEXP XSEXP, SEXP eigmatSEXP, SEXP lambdaSEXP, SEXP sigmaeSEXP, SEXP sigmagammaSEXP, SEXP taugammaSEXP) {
-BEGIN_RCPP
-    Rcpp::RObject rcpp_result_gen;
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< arma::vec >::type gamma(gammaSEXP);
-    Rcpp::traits::input_parameter< arma::uvec >::type alpha(alphaSEXP);
-    Rcpp::traits::input_parameter< arma::vec >::type y(ySEXP);
-    Rcpp::traits::input_parameter< arma::mat >::type X(XSEXP);
-    Rcpp::traits::input_parameter< arma::mat >::type eigmat(eigmatSEXP);
-    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
-    Rcpp::traits::input_parameter< double >::type sigmae(sigmaeSEXP);
-    Rcpp::traits::input_parameter< double >::type sigmagamma(sigmagammaSEXP);
-    Rcpp::traits::input_parameter< double >::type taugamma(taugammaSEXP);
-    rcpp_result_gen = Rcpp::wrap(update_gamma(gamma, alpha, y, X, eigmat, lambda, sigmae, sigmagamma, taugamma));
-    return rcpp_result_gen;
-END_RCPP
-}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_TGLG_eigen_val", (DL_FUNC) &_TGLG_eigen_val, 1},
-    {"_TGLG_update_test", (DL_FUNC) &_TGLG_update_test, 1},
-    {"_TGLG_update_gamma", (DL_FUNC) &_TGLG_update_gamma, 9},
     {NULL, NULL, 0}
 };
 

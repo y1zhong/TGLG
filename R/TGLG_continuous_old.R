@@ -1,0 +1,614 @@
+# TGLG model fitting for continous outcome
+# Input Arguments:
+#   X: input features, dimension n*p, with n as sample size and p as number of features
+#   y: response variable: continous value
+#   net: igraph object that represents the network
+#   nsim: total number of MCMC iteration
+#   ntune: first number of MCMC iteration to adjust propose variance to get desired acceptance rate
+#   freqTune: frequency to tune the variance term.
+#   nest: number used for estimation
+#   nthin: thin MCMC chain
+#   a.alpha, b.alpha: inverse-gamma distribution parameter for sigma_alpha
+#   a.gamma, b.gamma: inverse-gamma distribution parameter for sigma_gamma
+#   lambda.lower, lambda.uppper: lower and upper bound of uniform distribution for lambda
+#   emu, esd: mean and standard deviation of log-normal distribution for epsilon
+#
+# Output object:
+#   post_summary: a dataframe including the selection probablity and posterior mean of betas
+#   dat: X, y, and net used to generate results
+#   save_mcmc: all the mcmc samples saved after burnin and thinning.
+#' @export
+#' @import glmnet
+#' @import mvnfast
+#' @import MCMCpack
+#' @import pROC
+#' @import truncnorm
+#' @import Matrix
+TGLG_continuous = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
+                                   nest=10000, nthin=10, a.alpha=0.01,b.alpha=0.01,
+                                   a.gamma=0.01,b.gamma=0.01, X.scale=T,
+                                   ae0=0.01,be0=0.01,lambda.lower=0,
+                                   lambda.upper=10, emu=-5, esd=3,prob_select=0.95,
+                                   seed=123, confound=NULL, beta.ini.meth='LASSO',
+                           lambda.ini='median', noise=FALSE, select.prop=0.9){
+  nsim=10000
+  #if(X.scale == T) X <- scale(X)
+  if(!is.null(confound)){
+    if (sum(apply(confound, 2, class) != "numeric") != 0) {
+      stop('confounder class type not numeric')
+    }
+    if(nrow(X) != nrow(confound)) stop('rownames of X and cf do not match')
+    X_feat <- X
+    #confound_scale <- scale(confound)
+    p_feat <- ncol(X_feat)
+    X <- as.matrix(cbind(X,confound))
+    net <- net + vertices(colnames(confound))
+  }
+  set.seed(seed)
+  p = ncol(X) #number of features
+  if(is.null(net)){
+    adjmat = diag(p)
+    net=graph.adjacency(adjmat,mode="undirected")
+    
+  }
+  laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
+  #laplacian_sp <- Matrix(laplacian, sparse = TRUE)
+  
+  tau.gamma=0.01/p
+  tau.lambda=0.1
+  tau.epsilon = 0.5
+  #count number of acceptance during MCMC updates
+  accept.gamma=0
+  accept.epsilon=0
+  accept.lambda =0
+  #get initial value using lasso
+  #alpha = 0.5
+  if(beta.ini.meth == 'LASSO'){
+    beta.elas=cv.glmnet(X,y,alpha=1,intercept=FALSE)
+    beta.ini=as.numeric(coef(beta.elas,beta.elas$lambda.min))[-1]
+  } else if(beta.ini.meth  == 'Univariate') {
+    #inital beta values for features
+    beta.ini.feat <- sapply(1:p_feat, function(k){
+      beta_var <- cbind(X_feat[, k], confound)
+      fit_temp <- glm(y~., data=data.frame(beta_var))
+      #summary(fit_temp)
+      unname(fit_temp$coefficients[2])
+    })
+    #a <- beta.ini.feat[order(beta.ini.feat)]
+    #inital beta values for confounders
+    # beta.ini.conf <- sapply(1:(p-p_feat), function(k){
+    #   beta_var <- confound[, c(colnames(confound)[k], colnames(confound)[-k])]
+    #   fit_temp <- glm(y~., data=data.frame(beta_var))
+    #   summary(fit_temp)
+    #   unname(fit_temp$coefficients[2])
+    # })
+    fit_temp <- glm(y~., data=data.frame(confound))
+    summary(fit_temp)
+    #fit_temp_scale <- glm(y~., data=data.frame(confound_scale))
+    beta.ini.conf <-  unname(fit_temp$coefficients[-1])
+    sort(round(beta.ini.conf,0))
+    which.max(beta.ini.conf)
+    #conf_idx_large <- which(abs(beta.ini.conf) > max(abs(beta.ini.feat)))
+    #beta.ini.conf[conf_idx_large] <- sign(beta.ini.conf[conf_idx_large]) * max(abs(beta.ini.feat))
+    beta.ini <- c(beta.ini.feat, beta.ini.conf)
+  } else {
+    stop('beta ini method input incorrect')
+  }
+  
+  if(noise == T){
+    set.seed(seed)
+    noise.add <- rnorm(p, 0, 0.5)
+    beta.ini = beta.ini+noise.add
+  }
+  
+  
+  #initial value
+  sigmae=sd(y)#rinvgamma(1,ae0,be0)
+  betaini2 = beta.ini[which(beta.ini!=0)]
+  if(length(betaini2)==0){
+    betaini2=0.001
+  }
+  #change lambda inital
+  if(lambda.ini == 'median'){
+    lambda =  median(abs(betaini2))/2
+  } else if (lambda.ini == 'zero') {
+    lambda = 0
+  } else if (lambda.ini == 'prop') {
+    beta.abs <- abs(beta.ini.feat)
+    lambda = quantile(beta.abs, select.prop)
+  } else {
+    stop('lambda initial incorrect')
+  }
+  
+  
+  gamma =beta.ini
+  alpha =beta.ini
+  beta = alpha*as.numeric(abs(gamma)>lambda)
+  sigma.alpha = 5
+  sigma.gamma = b.gamma/a.gamma
+  epsilon = emu
+  #eigen.value = eigen(laplacian)$values
+  eigen.value = eigen_val(laplacian)
+  Ip = diag(1,nrow(laplacian)) #identy matrix
+  #Ip <- .sparseDiagonal(nrow(laplacian))
+  
+  eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
+  #eigmat = laplacian_sp+exp(epsilon)*Ip
+  
+  #matrix to store values for all iterations
+  Beta =matrix(0,nrow=nsim,ncol=p)
+  Alpha =matrix(0,nrow=nsim,ncol=p)
+  Gamma = matrix(0,nrow=nsim,ncol=p)
+  Lambda=rep(0,nsim)
+  Sigma.gamma=rep(0,nsim)
+  Sigma.alpha = rep(0, nsim)
+  Epsilon = rep(0, nsim)
+  likelihood = rep(0, nsim)
+  Sigmae = rep(0, nsim)
+  #SimTime = rep(0, nsim)
+  pb = txtProgressBar(style=3)
+  for(sim in 1:nsim){
+    #update gamma using MALA
+    curr.gamma=gamma
+    curr.hgamma= curr.gamma^2-lambda^2
+    curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
+    yerr = y-X%*%curr.beta
+    curr.diff=crossprod(X, yerr)
+    curr.dgamma = dappro2(curr.hgamma)*curr.gamma
+    
+    tau.gamma_half <- tau.gamma/2
+    sigmae_twice <- sigmae*2
+    
+    eigmat_curr.gamma <- eigmat%*%curr.gamma
+    #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
+    curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
+    new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
+    new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
+    new.gamma = as.numeric(new.gamma)
+    new.hgamma = new.gamma^2-lambda^2
+    new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
+    new.yerr = y-X%*%new.beta
+    new.diff = crossprod(X, new.yerr)
+    new.dgamma = dappro2(new.hgamma)*new.gamma
+    curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
+    
+    #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    curr.adiff = new.gamma- new.gamma.mean
+    curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
+    new.adiff=curr.gamma-curr.gamma.mean
+    new.den =0.5* sum(new.adiff^2)/tau.gamma
+    u=runif(1)
+    post.diff=curr.post+curr.den-new.post-new.den
+    if(post.diff>=log(u)){
+      accept.gamma=accept.gamma+1
+      gamma=new.gamma
+    }
+    Gamma[sim,]=gamma
+    beta=alpha*as.numeric(abs(gamma)>lambda)
+    #update alpha
+    
+    actset=which(abs(gamma)>lambda)
+    non.actset=setdiff(1:p,actset)
+    actset_len <- length(actset)
+    if(length(non.actset)>0 ){
+      alpha[non.actset]=rnorm(length(non.actset),mean=0,sd=sqrt(sigma.alpha))
+    }
+    
+    if(actset_len>0){
+      if(actset_len > 1) {
+        XA=X[,actset]
+        # pvar = diag(rep(1/sigma.alpha,length(actset)))
+        # premat = crossprod(XA)/sigmae + pvar
+        premat = crossprod(XA)/sigmae
+        diag(premat) <- diag(premat) + (1/sigma.alpha)
+        
+        premat_chol <- chol(premat)
+        mu <- crossprod(XA, y)/sigmae
+        #transpose in function
+        #b2 <- forwardsolve(premat_chol, mu, transpose = T)
+        b <- backsolve(premat_chol, mu, transpose=T)
+        Z <- rnorm(actset_len, 0, 1)
+        alpha[actset] <- backsolve(premat_chol, Z+b)
+        
+        # varx = chol2inv(chol(premat))
+        # meanx = varx%*%crossprod(XA, y)/sigmae
+        # alpha[actset] = rmvn(1,  mu=meanx, sigma = varx)
+        
+        #varx = chol2inv(chol(premat))
+        # mu <- crossprod(XA, y)/sigmae
+        # s <- solve(premat, mu)
+        # Z <- rnorm(length(mu), 0, 1)
+        # b <- backsolve(premat_chol, Z)
+        # alpha[actset] <- s + b
+        
+        #gamma[actset] = rmvnorm(1, mean=meanx, sigma = varx)
+      } else {
+        XA = X[, actset]
+        varx = 1/(sum(XA^2) + 1/sigma.alpha)
+        meanx = varx*sum(XA*y)/sigmae
+        alpha[actset] = rnorm(1, mean = meanx, sd = sqrt(varx))
+      }
+    }
+    
+    Alpha[sim, ] = alpha
+    #update sigma.gamma
+    a.gamma.posterior=a.gamma+0.5*p
+    b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
+    #set.seed(123)
+    sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
+    Sigma.gamma[sim] = sigma.gamma
+    
+    beta=alpha*as.numeric(abs(gamma)>lambda)
+    a.alpha.posterior = a.alpha + 0.5*p
+    b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
+    sigma.alpha = rinvgamma(1, a.alpha.posterior, a.alpha.posterior)
+    Sigma.alpha[sim] = sigma.alpha
+    
+    ae=ae0+nrow(X)/2
+    be=be0+0.5*sum((y-X%*%beta)^2)
+    sigmae=rinvgamma(1,ae,be)
+    Sigmae[sim] =sigmae
+    
+    #update epsilon
+    epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
+    sgamma = sum(gamma^2)
+    
+    sgamma_cal <- sgamma*0.5/sigma.gamma
+    esd_square <- esd^2
+    
+    elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma_cal - epsilon - 0.5*(epsilon-emu)^2/esd_square
+    eigmat.new = laplacian + exp(epsilon.new)*Ip
+    elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma_cal-epsilon.new- 0.5*(epsilon.new-emu)^2/esd_square
+    eu = runif(1)
+    ediff = elike.new - elike.curr
+    if(ediff>=log(eu)) {
+      epsilon = epsilon.new
+      eigmat = eigmat.new
+      accept.epsilon = accept.epsilon+1
+    }
+    Epsilon[sim] = epsilon
+    
+    #update lambda
+    lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
+    #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
+    curr.lpost=-sum((y-X%*%beta)^2)/sigmae*0.5
+    new.beta=alpha*as.numeric(abs(gamma)>lambda.new)
+    new.lpost=-sum((y-X%*%new.beta)^2)/sigmae*0.5
+    dnew = log(dtruncnorm(lambda.new,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda)))
+    dold = log(dtruncnorm(lambda,a=lambda.lower,b=lambda.upper,mean=lambda.new,sd=sqrt(tau.lambda)))
+    llu=runif(1)
+    ldiff=new.lpost + dold-curr.lpost-dnew
+    if(ldiff>log(llu)){
+      lambda=lambda.new
+      beta=new.beta
+      accept.lambda = accept.lambda+1
+    }
+    Lambda[sim]=lambda
+    Beta[sim,]=beta
+    
+    likelihood[sim] = -sum((y-X%*%beta)^2)/sigmae*0.5
+    
+    
+    if(sim<=ntune&sim%%freqTune==0){
+      tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
+      tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
+      tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
+      accept.gamma=0
+      accept.epsilon=0
+      accept.lambda =0
+      
+    }
+    #SimTime[sim] <- time[3]
+    setTxtProgressBar(pb,sim/nsim)
+  }
+  
+  close(pb)
+  #use last nest iterations to do the estimation and thin by nthin
+  numrow = nest/nthin
+  fgamma=matrix(0,nrow=numrow,ncol=length(gamma))
+  for(j in 1:nest){
+    if(j%%nthin==0){
+      fgamma[j/nthin,]=as.numeric(abs(Gamma[nsim-nest+j,])>Lambda[nsim-nest+j])
+    }
+  }
+  #selection probability for each predictor
+  gammaSelProb=apply(fgamma,2,mean)
+  
+  hbeta=Beta[((nsim-nest+1):nsim)%%nthin==1,]
+  
+  gammaSelId=as.numeric(gammaSelProb>prob_select)
+  beta.est=rep(0,p)
+  beta.select=which(gammaSelId==1)
+  for(j in 1:length(beta.select)) {
+    colid =beta.select[j]
+    beta.est[colid]=mean(hbeta[fgamma[,colid]==1, colid])
+  }
+  
+  post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
+  iter = seq((nsim-nest+1),nsim,by=nthin)
+  save_mcmc = cbind(iter,Beta[iter,],Alpha[iter,],Gamma[iter,],
+                    Lambda[iter],Sigma.gamma[iter],Sigma.alpha[iter],Epsilon[iter],Sigmae[iter],
+                    likelihood[iter])
+  colnames(save_mcmc) = c("iter",
+                          paste("beta",1:p,sep=""),
+                          paste("alpha",1:p,sep=""),
+                          paste("gamma",1:p,sep=""),
+                          "lambda","sigma_gamma","sigma_alpha","epsilon","sigmae","loglik")
+  
+  return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
+}
+
+
+
+#' # TGLG model fitting for continous outcome
+#' # Input Arguments:
+#' #   X: input features, dimension n*p, with n as sample size and p as number of features
+#' #   y: response variable: continous value
+#' #   net: igraph object that represents the network
+#' #   nsim: total number of MCMC iteration
+#' #   ntune: first number of MCMC iteration to adjust propose variance to get desired acceptance rate
+#' #   freqTune: frequency to tune the variance term.
+#' #   nest: number used for estimation
+#' #   nthin: thin MCMC chain
+#' #   a.alpha, b.alpha: inverse-gamma distribution parameter for sigma_alpha
+#' #   a.gamma, b.gamma: inverse-gamma distribution parameter for sigma_gamma
+#' #   lambda.lower, lambda.uppper: lower and upper bound of uniform distribution for lambda
+#' #   emu, esd: mean and standard deviation of log-normal distribution for epsilon
+#' #
+#' # Output object:
+#' #   post_summary: a dataframe including the selection probablity and posterior mean of betas
+#' #   dat: X, y, and net used to generate results
+#' #   save_mcmc: all the mcmc samples saved after burnin and thinning.
+#' #' @export
+#' #' @import glmnet
+#' #' @import mvnfast
+#' #' @import MCMCpack
+#' #' @import pROC
+#' #' @import truncnorm
+#' #' @import Matrix
+#' TGLG_continuous_revised = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
+#'                            nest=10000, nthin=10, a.alpha=0.01,b.alpha=0.01,
+#'                            a.gamma=0.01,b.gamma=0.01,
+#'                            ae0=0.01,be0=0.01,lambda.lower=0,
+#'                            lambda.upper=10, emu=-5, esd=3,prob_select=0.95){
+#' 
+#'   p = ncol(X) #number of features
+#' 
+#'   if(is.null(net)){
+#'     adjmat = diag(p)
+#'     net=graph.adjacency(adjmat,mode="undirected")
+#' 
+#'   }
+#'   laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
+#'   #laplacian_sp <- Matrix(laplacian, sparse = TRUE)
+#'   
+#'   tau.gamma=0.01/p
+#'   tau.lambda=0.1
+#'   tau.epsilon = 0.5
+#'   #count number of acceptance during MCMC updates
+#'   accept.gamma=0
+#'   accept.epsilon=0
+#'   accept.lambda =0
+#'   #get initial value using lasso
+#'   beta.elas=cv.glmnet(X,y,alpha=1,intercept=FALSE)
+#'   beta.ini=as.numeric(coef(beta.elas,beta.elas$lambda.min))[-1]
+#'   #initial value
+#'   sigmae=sd(y)#rinvgamma(1,ae0,be0)
+#'   betaini2 = beta.ini[which(beta.ini!=0)]
+#'   if(length(betaini2)==0){
+#'     betaini2=0.001
+#'   }
+#'   lambda =  median(abs(betaini2))/2
+#'   gamma =beta.ini
+#'   alpha =beta.ini
+#'   beta = alpha*as.numeric(abs(gamma)>lambda)
+#'   sigma.alpha = 5
+#'   sigma.gamma = b.gamma/a.gamma
+#'   epsilon = emu
+#'   #eigen.value = eigen(laplacian)$values
+#'   eigen.value = eigen_val(laplacian)
+#'   #Ip <- .sparseDiagonal(nrow(laplacian))
+#'   
+#'   Ip = diag(1,nrow(laplacian)) #identy matrix
+#'   eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
+#'   
+#'   #eigmat = laplacian_sp+exp(epsilon)*Ip
+#'   
+#'   #matrix to store values for all iterations
+#'   Beta =matrix(0,nrow=nsim,ncol=p)
+#'   Alpha =matrix(0,nrow=nsim,ncol=p)
+#'   Gamma = matrix(0,nrow=nsim,ncol=p)
+#'   Lambda=rep(0,nsim)
+#'   Sigma.gamma=rep(0,nsim)
+#'   Sigma.alpha = rep(0, nsim)
+#'   Epsilon = rep(0, nsim)
+#'   likelihood = rep(0, nsim)
+#'   Sigmae = rep(0, nsim)
+#'   pb = txtProgressBar(style=3)
+#'   for(sim in 1:nsim){
+#'     #update gamma using MALA
+#'     curr.gamma=gamma
+#'     curr.hgamma= curr.gamma^2-lambda^2
+#'     curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
+#'     yerr = y-X%*%curr.beta
+#'     curr.diff=crossprod(X, yerr)
+#'     curr.dgamma = dappro2(curr.hgamma)*curr.gamma
+#' 
+#'     tau.gamma_half <- tau.gamma/2
+#'     sigmae_twice <- sigmae*2
+#' 
+#'     eigmat_curr.gamma <- eigmat%*%curr.gamma
+#'     #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
+#'     curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
+#'     new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
+#'     new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
+#'     new.gamma = as.numeric(new.gamma)
+#'     new.hgamma = new.gamma^2-lambda^2
+#'     new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
+#'     new.yerr = y-X%*%new.beta
+#'     new.diff = crossprod(X, new.yerr)
+#'     new.dgamma = dappro2(new.hgamma)*new.gamma
+#'     curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
+#' 
+#'     #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+#'     new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+#'     curr.adiff = new.gamma- new.gamma.mean
+#'     curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
+#'     new.adiff=curr.gamma-curr.gamma.mean
+#'     new.den =0.5* sum(new.adiff^2)/tau.gamma
+#'     u=runif(1)
+#'     post.diff=curr.post+curr.den-new.post-new.den
+#'     if(post.diff>=log(u)){
+#'       accept.gamma=accept.gamma+1
+#'       gamma=new.gamma
+#'     }
+#'     Gamma[sim,]=gamma
+#'     beta=alpha*as.numeric(abs(gamma)>lambda)
+#'     #update alpha
+#' 
+#'     actset=which(abs(gamma)>lambda)
+#'     non.actset=setdiff(1:p,actset)
+#' 
+#'     if(length(non.actset)>0 ){
+#'       alpha[non.actset]=rnorm(length(non.actset),mean=0,sd=sqrt(sigma.alpha))
+#'     }
+#' 
+#'     if(length(actset)>0){
+#'       if(length(actset) > 1) {
+#'         XA=X[,actset]
+#'         pvar = diag(rep(1/sigma.alpha,length(actset)))
+#'         premat = crossprod(XA)/sigmae + pvar
+#' 
+#'         # premat_chol <- chol(premat)
+#'         # mu <- crossprod(XA, y)/sigmae
+#'         # b <- forwardsolve(t(premat_chol), mu)
+#'         # Z <- rnorm(length(b), 0, 1)
+#'         # alpha[actset] <- backsolve(premat_chol, Z+b)
+#' 
+#'         varx = chol2inv(chol(premat))
+#'         meanx = varx%*%crossprod(XA, y)/sigmae
+#'         alpha[actset] = rmvn(1,  mu=meanx, sigma = varx)
+#' 
+#'         #varx = chol2inv(chol(premat))
+#'         # mu <- crossprod(XA, y)/sigmae
+#'         # s <- solve(premat, mu)
+#'         # Z <- rnorm(length(mu), 0, 1)
+#'         # b <- backsolve(premat_chol, Z)
+#'         # alpha[actset] <- s + b
+#' 
+#'         #gamma[actset] = rmvnorm(1, mean=meanx, sigma = varx)
+#'       } else {
+#'         XA = X[, actset]
+#'         varx = 1/(sum(XA^2) + 1/sigma.alpha)
+#'         meanx = varx*sum(XA*y)/sigmae
+#'         alpha[actset] = rnorm(1, mean = meanx, sd = sqrt(varx))
+#'       }
+#'     }
+#' 
+#'     Alpha[sim, ] = alpha
+#'     #update sigma.gamma
+#'     a.gamma.posterior=a.gamma+0.5*p
+#'     b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
+#'     sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
+#'     Sigma.gamma[sim] = sigma.gamma
+#' 
+#'     beta=alpha*as.numeric(abs(gamma)>lambda)
+#'     a.alpha.posterior = a.alpha + 0.5*p
+#'     b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
+#'     sigma.alpha = rinvgamma(1, a.alpha.posterior, a.alpha.posterior)
+#'     Sigma.alpha[sim] = sigma.alpha
+#' 
+#'     ae=ae0+nrow(X)/2
+#'     be=be0+0.5*sum((y-X%*%beta)^2)
+#'     sigmae=rinvgamma(1,ae,be)
+#'     Sigmae[sim] =sigmae
+#' 
+#'     #update epsilon
+#'     epsilon.new = rnorm(1,mean = epsilon, sd = sqrt(tau.epsilon))
+#'     sgamma = sum(gamma^2)
+#' 
+#'     sgamma_cal <- sgamma*0.5/sigma.gamma
+#'     esd_square <- esd^2
+#' 
+#'     elike.curr = 0.5*sum(log(eigen.value+exp(epsilon))) - exp(epsilon)*sgamma_cal - epsilon - 0.5*(epsilon-emu)^2/esd_square
+#'     eigmat.new = laplacian + exp(epsilon.new)*Ip
+#'     elike.new = 0.5*sum(log(eigen.value+exp(epsilon.new))) - exp(epsilon.new)*sgamma_cal-epsilon.new- 0.5*(epsilon.new-emu)^2/esd_square
+#'     eu = runif(1)
+#'     ediff = elike.new - elike.curr
+#'     if(ediff>=log(eu)) {
+#'       epsilon = epsilon.new
+#'       eigmat = eigmat.new
+#'       accept.epsilon = accept.epsilon+1
+#'     }
+#'     Epsilon[sim] = epsilon
+#' 
+#'     #update lambda
+#'     lambda.new=rtruncnorm(1,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda))
+#'     #curr.lpost=-crossprod(y-X%*%beta)/sigmae*0.5
+#'     curr.lpost=-sum((y-X%*%beta)^2)/sigmae*0.5
+#'     new.beta=alpha*as.numeric(abs(gamma)>lambda.new)
+#'     new.lpost=-sum((y-X%*%new.beta)^2)/sigmae*0.5
+#'     dnew = log(dtruncnorm(lambda.new,a=lambda.lower,b=lambda.upper,mean=lambda,sd=sqrt(tau.lambda)))
+#'     dold = log(dtruncnorm(lambda,a=lambda.lower,b=lambda.upper,mean=lambda.new,sd=sqrt(tau.lambda)))
+#'     llu=runif(1)
+#'     ldiff=new.lpost + dold-curr.lpost-dnew
+#'     if(ldiff>log(llu)){
+#'       lambda=lambda.new
+#'       beta=new.beta
+#'       accept.lambda = accept.lambda+1
+#'     }
+#'     Lambda[sim]=lambda
+#'     Beta[sim,]=beta
+#' 
+#'     likelihood[sim] = -sum((y-X%*%beta)^2)/sigmae*0.5
+#' 
+#' 
+#'     if(sim<=ntune&sim%%freqTune==0){
+#'       tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
+#'       tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
+#'       tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
+#'       accept.gamma=0
+#'       accept.epsilon=0
+#'       accept.lambda =0
+#' 
+#'     }
+#' 
+#'     setTxtProgressBar(pb,sim/nsim)
+#'   }
+#' 
+#'   close(pb)
+#'   #use last nest iterations to do the estimation and thin by nthin
+#'   numrow = nest/nthin
+#'   fgamma=matrix(0,nrow=numrow,ncol=length(gamma))
+#'   for(j in 1:nest){
+#'     if(j%%nthin==0){
+#'       fgamma[j/nthin,]=as.numeric(abs(Gamma[nsim-nest+j,])>Lambda[nsim-nest+j])
+#'     }
+#'   }
+#'   #selection probability for each predictor
+#'   gammaSelProb=apply(fgamma,2,mean)
+#' 
+#'   hbeta=Beta[((nsim-nest+1):nsim)%%nthin==1,]
+#' 
+#'   gammaSelId=as.numeric(gammaSelProb>prob_select)
+#'   beta.est=rep(0,p)
+#'   beta.select=which(gammaSelId==1)
+#'   for(j in 1:length(beta.select)) {
+#'     colid =beta.select[j]
+#'     beta.est[colid]=mean(hbeta[fgamma[,colid]==1, colid])
+#'   }
+#' 
+#'   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
+#'   iter = seq((nsim-nest+1),nsim,by=nthin)
+#'   save_mcmc = cbind(iter,Beta[iter,],Alpha[iter,],Gamma[iter,],
+#'                     Lambda[iter],Sigma.gamma[iter],Sigma.alpha[iter],Epsilon[iter],Sigmae[iter],
+#'                     likelihood[iter])
+#'   colnames(save_mcmc) = c("iter",
+#'                           paste("beta",1:p,sep=""),
+#'                           paste("alpha",1:p,sep=""),
+#'                           paste("gamma",1:p,sep=""),
+#'                           "lambda","sigma_gamma","sigma_alpha","epsilon","sigmae","loglik")
+#' 
+#'   return(list(post_summary=post_summary, dat = list(X=X,y=y,net=net), save_mcmc = save_mcmc))
+#' }

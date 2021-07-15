@@ -24,13 +24,13 @@
 #' @import pROC
 #' @import truncnorm
 #' @import Matrix
-TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, freqTune=100,
-                                  nest=10000, nthin=10,  a.alpha=0.01,b.alpha=0.01,
-                                  a.gamma=0.01,b.gamma=0.01, lambda=5,
-                                  ae0=0.01,be0=0.01,lambda.lower=0,
-                                  lambda.upper=10, emu=-5, esd=3,prob_select=0.95,
-                                  seed=123, confound=NULL, beta.ini.meth='LASSO',
-                                  noise=FALSE){
+TGLG_continuous_lambda_emu_gamma = function(X, y, nsim=30000, ntune=10000, freqTune=100,
+                                      nest=10000, nthin=10,  a.alpha=0.01,b.alpha=0.01,
+                                       lambda=5,
+                                      ae0=0.01,be0=0.01,lambda.lower=0,
+                                      lambda.upper=10, emu=-5, esd=3,
+                                      seed=123, confound=NULL, beta.ini.meth='LASSO',
+                                      noise=FALSE){
   #if(X.scale == T) X <- scale(X)
   if(!is.null(confound)){
     if (sum(apply(confound, 2, class) != "numeric") != 0) {
@@ -41,24 +41,19 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     #confound_scale <- scale(confound)
     p_feat <- ncol(X_feat)
     X <- as.matrix(cbind(X,confound))
-    net <- net %>%
-      add_vertices(ncol(confound), name=colnames(confound))
+    #net <- net + vertices(colnames(confound))
   }
   set.seed(seed)
   p = ncol(X) #number of features
-  if(is.null(net)){
-    adjmat = diag(p)
-    net=graph.adjacency(adjmat,mode="undirected")
-    
-  }
-  laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
+  
+  #laplacian = laplacian_matrix(net,normalized=TRUE,sparse=FALSE)
   #laplacian_sp <- Matrix(laplacian, sparse = TRUE)
   
-  tau.gamma=0.01/p
+  #tau.gamma=0.01/p
   tau.lambda=0.1
   tau.epsilon = 0.5
   #count number of acceptance during MCMC updates
-  accept.gamma=0
+  #accept.gamma=0
   accept.epsilon=0
   #accept.lambda =0
   #get initial value using lasso
@@ -114,82 +109,84 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   # }
   
   burnin <- nsim-nest
-  gamma =beta.ini
+  #gamma =beta.ini
   alpha =beta.ini
-  beta = alpha*as.numeric(abs(gamma)>lambda)
+  beta=alpha
+  #beta = alpha*as.numeric(abs(gamma)>lambda)
   #sigma.alpha = 5
-  sigma.alpha = 0.1
-  sigma.gamma = b.gamma/a.gamma
+  sigma.alpha=0.1
+  #sigma.gamma = b.gamma/a.gamma
   epsilon = emu
   #eigen.value = eigen(laplacian)$values
-  eigen.value = eigen_val(laplacian)
-  Ip = diag(1,nrow(laplacian)) #identy matrix
+  #eigen.value = eigen_val(laplacian)
+  #Ip = diag(1,nrow(laplacian)) #identy matrix
   #Ip <- .sparseDiagonal(nrow(laplacian))
   
-  eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
+  #eigmat = laplacian+exp(epsilon)*Ip #inverse of graph laplacian matrix
   #eigmat = laplacian_sp+exp(epsilon)*Ip
   
   #matrix to store values for all iterations
   #nmcmc <- nest/nthin
   numrow = nest/nthin
-  fgamma=matrix(0,nrow=numrow,ncol=length(gamma))
+  fgamma=matrix(0,nrow=numrow,ncol=length(beta))
   
   Beta =matrix(0,nrow=numrow,ncol=p)
   Alpha =matrix(0,nrow=numrow,ncol=p)
-  Gamma = matrix(0,nrow=numrow,ncol=p)
+  #Gamma = matrix(0,nrow=numrow,ncol=p)
   #Lambda=rep(0,numrow)
-  Sigma.gamma=rep(0,numrow)
+  #Sigma.gamma=rep(0,numrow)
   Sigma.alpha = rep(0, numrow)
   Epsilon = rep(0, numrow)
   likelihood = rep(0, numrow)
   Sigmae = rep(0, numrow)
   iter = seq((nsim-nest+1),nsim,by=nthin)
-  AcceptGammaTune = c()
-  AcceptGamma = rep(0, numrow)
+  #AcceptGammaTune = c()
+  #AcceptGamma = rep(0, numrow)
   #SimTime = rep(0, nsim)
   #sim=1
   pb = txtProgressBar(style=3)
   for(sim in 1:nsim){
     #update gamma using MALA
-    curr.gamma=gamma
-    curr.hgamma= curr.gamma^2-lambda^2
-    curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
-    yerr = y-X%*%curr.beta
-    curr.diff=crossprod(X, yerr)
-    curr.dgamma = dappro2(curr.hgamma)*curr.gamma
-    
-    tau.gamma_half <- tau.gamma/2
-    sigmae_twice <- sigmae*2
-    
-    eigmat_curr.gamma <- eigmat%*%curr.gamma
-    #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
-    curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
-    new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
-    new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
-    new.gamma = as.numeric(new.gamma)
-    new.hgamma = new.gamma^2-lambda^2
-    new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
-    new.yerr = y-X%*%new.beta
-    new.diff = crossprod(X, new.yerr)
-    new.dgamma = dappro2(new.hgamma)*new.gamma
-    curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
-    
-    #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
-    new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
-    curr.adiff = new.gamma- new.gamma.mean
-    curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
-    new.adiff=curr.gamma-curr.gamma.mean
-    new.den =0.5* sum(new.adiff^2)/tau.gamma
-    u=runif(1)
-    post.diff=curr.post+curr.den-new.post-new.den
-    if(post.diff>=log(u)){
-      accept.gamma=accept.gamma+1
-      gamma=new.gamma
-    }
-    beta=alpha*as.numeric(abs(gamma)>lambda)
+    # curr.gamma=gamma
+    # curr.hgamma= curr.gamma^2-lambda^2
+    # curr.beta=alpha*as.numeric(abs(curr.gamma)>lambda)
+    # yerr = y-X%*%curr.beta
+    # curr.diff=crossprod(X, yerr)
+    # curr.dgamma = dappro2(curr.hgamma)*curr.gamma
+    # 
+    # tau.gamma_half <- tau.gamma/2
+    # sigmae_twice <- sigmae*2
+    # 
+    # eigmat_curr.gamma <- eigmat%*%curr.gamma
+    # #curr.post=crossprod(yerr)/sigmae*0.5+0.5*crossprod(curr.gamma, crossprod(eigmat, curr.gamma))/sigma.gamma
+    # curr.post=sum(yerr^2)/sigmae_twice+0.5*crossprod(curr.gamma, eigmat_curr.gamma)/sigma.gamma
+    # new.gamma.mean = curr.gamma + tau.gamma_half*(curr.diff*gamma*curr.dgamma/sigmae - eigmat_curr.gamma/sigma.gamma)
+    # new.gamma = new.gamma.mean+rnorm(length(gamma),0, sd=sqrt(tau.gamma))
+    # new.gamma = as.numeric(new.gamma)
+    # new.hgamma = new.gamma^2-lambda^2
+    # new.beta=alpha*as.numeric(abs(new.gamma)>lambda)
+    # new.yerr = y-X%*%new.beta
+    # new.diff = crossprod(X, new.yerr)
+    # new.dgamma = dappro2(new.hgamma)*new.gamma
+    # curr.gamma.mean = new.gamma + tau.gamma_half*(new.diff*gamma*new.dgamma/sigmae - eigmat%*%new.gamma/sigma.gamma)
+    # 
+    # #new.post=crossprod(new.yerr)/sigmae*0.5+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    # new.post=sum(new.yerr^2)/sigmae_twice+0.5*crossprod(new.gamma, crossprod(eigmat, new.gamma))/sigma.gamma
+    # curr.adiff = new.gamma- new.gamma.mean
+    # curr.den = 0.5*sum(curr.adiff^2)/tau.gamma
+    # new.adiff=curr.gamma-curr.gamma.mean
+    # new.den =0.5* sum(new.adiff^2)/tau.gamma
+    # u=runif(1)
+    # post.diff=curr.post+curr.den-new.post-new.den
+    # if(post.diff>=log(u)){
+    #   accept.gamma=accept.gamma+1
+    #   gamma=new.gamma
+    # }
+    # beta=alpha*as.numeric(abs(gamma)>lambda)
     #update alpha
     
-    actset=which(abs(gamma)>lambda)
+    #actset=which(abs(gamma)>lambda)
+    actset=seq(1:p)
     non.actset=setdiff(1:p,actset)
     actset_len <- length(actset)
     if(length(non.actset)>0 ){
@@ -199,22 +196,16 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     if(actset_len>0){
       if(actset_len > 1) {
         XA=X[,actset]
-        pvar = diag(rep(1/sigma.alpha,length(actset)))
-        premat = crossprod(XA)/sigmae + pvar
-        varx = chol2inv(chol(premat))
-        meanx = varx%*%crossprod(XA, y)/sigmae
-        alpha[actset] = rmvn(1,  mu=meanx, sigma = varx)
+        premat = crossprod(XA)/sigmae
+        diag(premat) <- diag(premat) + (1/sigma.alpha)
         
-        # XA=X[,actset]
-        # premat = crossprod(XA)/sigmae
-        # diag(premat) <- diag(premat) + (1/sigma.alpha)
-        # premat_chol <- chol(premat)
-        # mu <- crossprod(XA, y)/sigmae
-        # #transpose in function
-        # #b2 <- forwardsolve(premat_chol, mu, transpose = T)
-        # b <- backsolve(premat_chol, mu, transpose=T)
-        # Z <- rnorm(actset_len, 0, 1)
-        # alpha[actset] <- backsolve(premat_chol, Z+b)
+        premat_chol <- chol(premat)
+        mu <- crossprod(XA, y)/sigmae
+        #transpose in function
+        #b2 <- forwardsolve(premat_chol, mu, transpose = T)
+        b <- backsolve(premat_chol, mu, transpose=T)
+        Z <- rnorm(actset_len, 0, 1)
+        alpha[actset] <- backsolve(premat_chol, Z+b)
         
       } else {
         XA = X[, actset]
@@ -225,11 +216,12 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     }
     
     #update sigma.gamma
-    a.gamma.posterior=a.gamma+0.5*p
-    b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
-    sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
+    # a.gamma.posterior=a.gamma+0.5*p
+    # b.gamma.posterior=b.gamma+0.5*crossprod(gamma, eigmat%*%gamma)
+    # sigma.gamma=rinvgamma(1,a.gamma.posterior,b.gamma.posterior)
     
-    beta=alpha*as.numeric(abs(gamma)>lambda)
+    #beta=alpha*as.numeric(abs(gamma)>lambda)
+    beta=alpha
     a.alpha.posterior = a.alpha + 0.5*p
     b.alpha.posterior = b.alpha + 0.5*sum(alpha^2)
     sigma.alpha = rinvgamma(1, a.alpha.posterior, a.alpha.posterior)
@@ -272,34 +264,35 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
     #   accept.lambda = accept.lambda+1
     # }
     
-    if(sim<=ntune&sim%%freqTune==0){
-      tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
+    #if(sim<=ntune&sim%%freqTune==0){
+      #tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.5)
       #tau.gamma=adjust_acceptance(accept.gamma/100,tau.gamma,0.3)
-      AcceptGammaTune=c(AcceptGammaTune, accept.gamma/100)
+      #AcceptGammaTune=c(AcceptGammaTune, accept.gamma/100)
       #tau.lambda=adjust_acceptance(accept.lambda/100,tau.lambda,0.3)
       #tau.epsilon=adjust_acceptance(accept.epsilon/100,tau.epsilon,0.3)
-      accept.gamma=0
+      #accept.gamma=0
       #accept.epsilon=0
       #accept.lambda =0
       
-    }
+    #}
     if(sim %in% iter){
       idx <- match(sim, iter)
-      Gamma[idx,]=gamma
+      #Gamma[idx,]=gamma
       Alpha[idx, ] = alpha
-      Sigma.gamma[idx] = sigma.gamma
+      #Sigma.gamma[idx] = sigma.gamma
       Sigma.alpha[idx] = sigma.alpha
       Sigmae[idx] =sigmae
       #Epsilon[idx] = epsilon
       #Lambda[idx]=lambda
       Beta[idx,]=beta
       likelihood[idx] = -sum((y-X%*%beta)^2)/sigmae*0.5
-      AcceptGamma[idx]=accept.gamma
+      #AcceptGamma[idx]=accept.gamma
     }
     
     if(sim>burnin & ((sim-burnin) %% nthin == 0)){
       j=sim-burnin
-      fgamma[j/nthin,]=as.numeric(abs(gamma)>lambda)
+      #fgamma[j/nthin,]=as.numeric(abs(gamma)>lambda)
+      fgamma[j/nthin,]=rep(1, p)
     }
     setTxtProgressBar(pb,sim/nsim)
   }
@@ -312,7 +305,7 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   
   hbeta=Beta
   
-  gammaSelId=as.numeric(gammaSelProb>prob_select)
+  gammaSelId=as.numeric(gammaSelProb>0)
   beta.est=rep(0,p)
   beta.select=which(gammaSelId==1)
   for(j in 1:length(beta.select)) {
@@ -322,20 +315,20 @@ TGLG_continuous_lambda_emu = function(X, y, net=NULL,nsim=30000, ntune=10000, fr
   
   post_summary = data.frame(selectProb = gammaSelProb, betaEst = beta.est)
   #iter = seq((nsim-nest+1),nsim,by=nthin)
-  save_mcmc = cbind(iter,Beta,Alpha,Gamma,
-                    Sigma.gamma,Sigma.alpha,Sigmae,
-                    likelihood,AcceptGamma)
+  save_mcmc = cbind(iter,Beta,
+                    Sigma.alpha,Sigmae,
+                    likelihood)
   # save_mcmc = list(Beta=cbind(iter,Beta),
   #                  Alpha=cbind(iter,Alpha),
-  #                  Gamma=cbind(iter,Gamma),
-  #                  oth=cbind(iter,Sigma.gamma,Sigma.alpha,
-  #                            Sigmae,likelihood,AcceptGamma))
+  #                  #Gamma=cbind(iter,Gamma),
+  #                  oth=cbind(iter,Sigma.alpha,
+  #                            Sigmae,likelihood))
   colnames(save_mcmc) = c("iter",
                           paste("beta",1:p,sep=""),
-                          paste("alpha",1:p,sep=""),
-                          paste("gamma",1:p,sep=""),
-                          "sigma_gamma","sigma_alpha","sigmae","loglik","accept_gamma")
+                         # paste("gamma",1:p,sep=""),
+                         # "sigma_gamma",
+                         "sigma_alpha","sigmae","loglik")
   
-  return(list(post_summary=post_summary, dat = list(X=X_feat, confound=confound,y=y,net=net),
-              save_mcmc = save_mcmc,AcceptGammaTune=AcceptGammaTune))
+  return(list(post_summary=post_summary, dat = list(X=X_feat,confound=confound,y=y),
+              save_mcmc = save_mcmc))
 }
